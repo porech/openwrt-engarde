@@ -104,7 +104,7 @@ jobs:
       - name: Collect packages
         run: |
           mkdir -p packages
-          find /tmp/sdk/bin/ -name '*.ipk' -exec cp {} packages/ \;
+          find /tmp/sdk/bin/ -name '*.ipk' \( -name 'engarde-*' -o -name 'luci-app-engarde*' \) -exec cp {} packages/ \;
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -135,8 +135,10 @@ jobs:
             cd "$arch_dir"
             for ipk in *.ipk; do
               [ -f "$ipk" ] || continue
-              ar -p "$ipk" control.tar.gz | tar xzf - --to-stdout ./control 2>/dev/null || \
-                ar -p "$ipk" control.tar.gz | tar xzf - --to-stdout control
+              # Extract control metadata (handle both gzip and zstd compressed ipks)
+              tar -xOf "$ipk" ./control.tar.gz 2>/dev/null | tar xzf - --to-stdout ./control 2>/dev/null || \
+                tar -xOf "$ipk" ./control.tar.zst 2>/dev/null | zstd -d | tar xf - --to-stdout ./control 2>/dev/null || \
+                true
               echo "Filename: $ipk"
               echo "Size: $(stat -c %s "$ipk")"
               echo "SHA256sum: $(sha256sum "$ipk" | cut -d' ' -f1)"
