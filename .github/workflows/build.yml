@@ -41,37 +41,35 @@ jobs:
 
       - name: Extract SDK
         run: |
-          mkdir -p sdk
-          tar xf sdk.tar.xz --strip-components=1 -C sdk
+          mkdir -p /tmp/sdk
+          tar xf sdk.tar.xz --strip-components=1 -C /tmp/sdk
 
       - name: Configure feeds
         run: |
-          cd sdk
-          # Add the standard feeds
+          cd /tmp/sdk
           cp feeds.conf.default feeds.conf
-          # Add our local feed
+          # Point to the checked-out repo (not inside the SDK tree)
           echo "src-link engarde ${{ github.workspace }}" >> feeds.conf
           ./scripts/feeds update -a
-          ./scripts/feeds install -a -p engarde
+          ./scripts/feeds install engarde-client engarde-server luci-app-engarde
 
       - name: Override PKG_RELEASE with commit count
         run: |
           RELEASE=$(git rev-list --count HEAD)
-          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" sdk/feeds/engarde/engarde/Makefile
-          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" sdk/feeds/engarde/luci-app-engarde/Makefile 2>/dev/null || true
+          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" /tmp/sdk/feeds/engarde/engarde/Makefile
+          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" /tmp/sdk/feeds/engarde/luci-app-engarde/Makefile 2>/dev/null || true
 
       - name: Build packages
         run: |
-          cd sdk
+          cd /tmp/sdk
           make defconfig
-          make package/engarde-client/compile V=s -j$(nproc)
-          make package/engarde-server/compile V=s -j$(nproc)
+          make package/engarde/compile V=s -j$(nproc)
           make package/luci-app-engarde/compile V=s -j$(nproc)
 
       - name: Collect packages
         run: |
           mkdir -p packages
-          find sdk/bin/ -name '*.ipk' -exec cp {} packages/ \;
+          find /tmp/sdk/bin/ -name '*.ipk' -exec cp {} packages/ \;
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
