@@ -8,14 +8,24 @@ OpenWrt package feed for [Engarde](https://github.com/porech/engarde), a WireGua
 - **engarde-server** — engarde server binary (depends on engarde-client)
 - **luci-app-engarde** — LuCI web interface for configuring instances and monitoring real-time tunnel status
 
-## Prerequisites
+## Install on a running OpenWrt router
 
-This feed requires two standard OpenWrt feeds to be present in your build:
+SSH into your router and add the package feed:
+
+```sh
+echo "src-git engarde https://github.com/porech/openwrt-engarde.git" >> /etc/opkg/customfeeds.conf
+opkg update
+opkg install engarde-client luci-app-engarde
+```
+
+Then open LuCI and navigate to **Services → Engarde** to configure your instances.
+
+## Build from source (OpenWrt SDK)
+
+This feed requires two standard OpenWrt feeds:
 
 - `packages` — provides the Go toolchain used to compile the engarde binaries
 - `luci` — provides the LuCI framework required by luci-app-engarde
-
-## Adding the feed
 
 Add the following line to `feeds.conf.default` in your OpenWrt build tree:
 
@@ -27,10 +37,8 @@ Then update and install the feed:
 
 ```sh
 ./scripts/feeds update engarde
-./scripts/feeds install -a -f -p engarde
+./scripts/feeds install -a -p engarde
 ```
-
-## Selecting packages
 
 Run `make menuconfig` and enable the packages you need:
 
