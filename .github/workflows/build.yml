@@ -95,12 +95,19 @@ jobs:
         run: |
           cd /tmp/sdk
           make defconfig
-          # Trigger source download and extraction
+          # Trigger source download, extraction, and Go workspace setup
           make package/engarde/download V=s
           make package/engarde/prepare V=s
+          make package/engarde/configure V=s
           # Inject pre-built frontend assets into the extracted source
+          # (must happen after configure so the Go workspace setup doesn't wipe them)
           ENGARDE_BUILD_DIR=$(find /tmp/sdk/build_dir -maxdepth 2 -name 'engarde-*' -type d | head -1)
           cp -r ${{ github.workspace }}/frontend-assets "${ENGARDE_BUILD_DIR}/internal/assets/browser"
+          # Also inject into the Go workspace if it exists
+          GO_WORK_SRC=$(find "${ENGARDE_BUILD_DIR}/.go_work" -path '*/internal/assets' -type d 2>/dev/null | head -1)
+          if [ -n "${GO_WORK_SRC}" ]; then
+            cp -r ${{ github.workspace }}/frontend-assets "${GO_WORK_SRC}/browser"
+          fi
           # Build
           make package/engarde/compile V=s -j$(nproc)
           make package/luci-app-engarde/compile V=s -j$(nproc)
