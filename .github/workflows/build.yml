@@ -1,0 +1,132 @@
+name: Build and Deploy OpenWrt Packages
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86
+            subtarget: "64"
+            sdk: openwrt-sdk-23.05.5-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          - arch: aarch64_generic
+            target: armsr
+            subtarget: armv8
+            sdk: openwrt-sdk-23.05.5-armsr-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          - arch: arm_cortex-a7_neon-vfpv4
+            target: sunxi
+            subtarget: cortexa7
+            sdk: openwrt-sdk-23.05.5-sunxi-cortexa7_gcc-12.3.0_musl_eabi.Linux-x86_64.tar.xz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache OpenWrt SDK
+        uses: actions/cache@v4
+        id: cache-sdk
+        with:
+          path: sdk.tar.xz
+          key: openwrt-sdk-23.05.5-${{ matrix.target }}-${{ matrix.subtarget }}
+
+      - name: Download OpenWrt SDK
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        run: |
+          wget -q "https://downloads.openwrt.org/releases/23.05.5/targets/${{ matrix.target }}/${{ matrix.subtarget }}/${{ matrix.sdk }}" -O sdk.tar.xz
+
+      - name: Extract SDK
+        run: |
+          mkdir -p sdk
+          tar xf sdk.tar.xz --strip-components=1 -C sdk
+
+      - name: Configure feeds
+        run: |
+          cd sdk
+          # Add the standard feeds
+          cp feeds.conf.default feeds.conf
+          # Add our local feed
+          echo "src-link engarde ${{ github.workspace }}" >> feeds.conf
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a -p engarde
+
+      - name: Override PKG_RELEASE with commit count
+        run: |
+          RELEASE=$(git rev-list --count HEAD)
+          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" sdk/feeds/engarde/engarde/Makefile
+          sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" sdk/feeds/engarde/luci-app-engarde/Makefile 2>/dev/null || true
+
+      - name: Build packages
+        run: |
+          cd sdk
+          make defconfig
+          make package/engarde-client/compile V=s -j$(nproc)
+          make package/engarde-server/compile V=s -j$(nproc)
+          make package/luci-app-engarde/compile V=s -j$(nproc)
+
+      - name: Collect packages
+        run: |
+          mkdir -p packages
+          find sdk/bin/ -name '*.ipk' -exec cp {} packages/ \;
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: packages/*.ipk
+
+  upload:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Organize packages by architecture
+        run: |
+          for dir in artifacts/packages-*/; do
+            arch=$(basename "$dir" | sed 's/packages-//')
+            mkdir -p "repo/${arch}"
+            cp "$dir"/*.ipk "repo/${arch}/"
+          done
+
+      - name: Generate package indexes
+        run: |
+          for arch_dir in repo/*/; do
+            cd "$arch_dir"
+            # Generate Packages index from ipk control metadata
+            for ipk in *.ipk; do
+              [ -f "$ipk" ] || continue
+              ar -p "$ipk" control.tar.gz | tar xzf - --to-stdout ./control 2>/dev/null || \
+                ar -p "$ipk" control.tar.gz | tar xzf - --to-stdout control
+              echo "Filename: $ipk"
+              echo "Size: $(stat -c %s "$ipk")"
+              echo "SHA256sum: $(sha256sum "$ipk" | cut -d' ' -f1)"
+              echo ""
+            done > Packages
+            gzip -9c Packages > Packages.gz
+            cd "$OLDPWD"
+          done
+
+      - name: Upload to artifact server
+        env:
+          UPLOAD_KEY: ${{ secrets.UPLOAD_KEY }}
+          UPLOAD_URL: ${{ vars.UPLOAD_URL }}
+        run: |
+          for arch_dir in repo/*/; do
+            arch=$(basename "$arch_dir")
+            for file in "$arch_dir"/*; do
+              filename=$(basename "$file")
+              echo "Uploading ${arch}/${filename}"
+              curl -4 -f -F "file=@${file}" \
+                -F "path=openwrt/23.05/${arch}/${filename}" \
+                -F "key=${UPLOAD_KEY}" \
+                "${UPLOAD_URL}"
+            done
+          done
