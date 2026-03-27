@@ -5,9 +5,36 @@ on:
     branches: [main]
 
 jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout engarde source
+        uses: actions/checkout@v4
+        with:
+          repository: porech/engarde
+          path: engarde-src
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build frontend
+        run: |
+          cd engarde-src
+          make frontend
+
+      - name: Upload frontend assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-assets
+          path: engarde-src/internal/assets/browser/
+
   build:
     runs-on: ubuntu-latest
+    needs: frontend
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: x86_64
@@ -26,6 +53,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download frontend assets
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-assets
+          path: frontend-assets
 
       - name: Cache OpenWrt SDK
         uses: actions/cache@v4
@@ -48,7 +81,6 @@ jobs:
         run: |
           cd /tmp/sdk
           cp feeds.conf.default feeds.conf
-          # Point to the checked-out repo (not inside the SDK tree)
           echo "src-link engarde ${{ github.workspace }}" >> feeds.conf
           ./scripts/feeds update -a
           ./scripts/feeds install engarde-client engarde-server luci-app-engarde
@@ -63,6 +95,13 @@ jobs:
         run: |
           cd /tmp/sdk
           make defconfig
+          # Trigger source download and extraction
+          make package/engarde/download V=s
+          make package/engarde/prepare V=s
+          # Inject pre-built frontend assets into the extracted source
+          ENGARDE_BUILD_DIR=$(find /tmp/sdk/build_dir -maxdepth 2 -name 'engarde-*' -type d | head -1)
+          cp -r ${{ github.workspace }}/frontend-assets "${ENGARDE_BUILD_DIR}/internal/assets/browser"
+          # Build
           make package/engarde/compile V=s -j$(nproc)
           make package/luci-app-engarde/compile V=s -j$(nproc)
 
@@ -98,7 +137,6 @@ jobs:
         run: |
           for arch_dir in repo/*/; do
             cd "$arch_dir"
-            # Generate Packages index from ipk control metadata
             for ipk in *.ipk; do
               [ -f "$ipk" ] || continue
               ar -p "$ipk" control.tar.gz | tar xzf - --to-stdout ./control 2>/dev/null || \
