@@ -1,0 +1,25 @@
+{
+	"luci-app-engarde": {
+		"description": "Grant access to Engarde configuration and status",
+		"read": {
+			"uci": ["engarde"],
+			"ubus": {
+				"luci.engarde": ["get_status", "list_instances"],
+				"service": ["list"]
+			}
+		},
+		"write": {
+			"uci": ["engarde"],
+			"ubus": {
+				"luci.engarde": [
+					"get_status",
+					"include_interface",
+					"exclude_interface",
+					"swap_exclusion",
+					"reset_exclusions",
+					"list_instances"
+				]
+			}
+		}
+	}
+}

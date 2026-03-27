@@ -1,0 +1,9 @@
+#!/bin/sh
+
+uci -q batch <<-EOF >/dev/null
+	set engarde.global=engarde
+	set engarde.global.enabled='0'
+	commit engarde
+EOF
+
+exit 0

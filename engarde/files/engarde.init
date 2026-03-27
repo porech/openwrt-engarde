@@ -1,0 +1,232 @@
+#!/bin/sh /etc/rc.common
+
+USE_PROCD=1
+START=95
+STOP=01
+
+CONFIGURATION=engarde
+YAML_DIR="/var/etc/engarde"
+
+# Sanitize a string for safe YAML embedding: strip double quotes and newlines
+yaml_safe() {
+	printf '%s' "$1" | tr -d '"\n\r'
+}
+
+# Validate that a value is a valid port number (1-65535)
+validate_port() {
+	case "$1" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	[ "$1" -ge 1 ] && [ "$1" -le 65535 ] && return 0
+	return 1
+}
+
+# Validate that a value is a valid integer
+validate_int() {
+	case "$1" in
+		-[0-9]*|[0-9]*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+# State variables for YAML generation callbacks
+_yaml_file=""
+_yaml_instance=""
+_has_excluded=0
+_has_overrides=0
+
+# Callback for config_list_foreach: write an excluded interface to YAML
+print_excluded_interface() {
+	local value="$1"
+	if [ "$_has_excluded" -eq 0 ]; then
+		echo "  excludedInterfaces:" >> "$_yaml_file"
+		_has_excluded=1
+	fi
+	echo "    - \"$(yaml_safe "$value")\"" >> "$_yaml_file"
+}
+
+# Callback for config_foreach: write a dst_override to YAML if it matches the current instance
+print_dst_override() {
+	local section="$1"
+	local override_instance override_interface override_dst_addr override_dst_port
+	config_get override_instance "$section" instance
+	[ "$override_instance" != "$_yaml_instance" ] && return 0
+	config_get override_interface "$section" interface
+	config_get override_dst_addr "$section" dst_addr
+	config_get override_dst_port "$section" dst_port
+
+	validate_port "$override_dst_port" || {
+		logger -t engarde "Invalid override dst_port for section '$section'"
+		return 0
+	}
+
+	if [ "$_has_overrides" -eq 0 ]; then
+		echo "  dstOverrides:" >> "$_yaml_file"
+		_has_overrides=1
+	fi
+	echo "    - ifName: \"$(yaml_safe "$override_interface")\"" >> "$_yaml_file"
+	echo "      dstAddr: \"$(yaml_safe "$override_dst_addr"):${override_dst_port}\"" >> "$_yaml_file"
+}
+
+start_service() {
+	config_load "${CONFIGURATION}"
+
+	local global_enabled
+	config_get_bool global_enabled global enabled 0
+	[ "$global_enabled" -eq 0 ] && return 0
+
+	mkdir -p "$YAML_DIR"
+
+	config_foreach start_instance instance
+}
+
+start_instance() {
+	local name="$1"
+	local type enabled
+
+	config_get_bool enabled "$name" enabled 0
+	[ "$enabled" -eq 0 ] && return 0
+
+	config_get type "$name" type
+	[ -z "$type" ] && return 0
+
+	local yaml_file="${YAML_DIR}/${name}.yml"
+	local binary
+
+	case "$type" in
+		client)
+			binary="/usr/bin/engarde-client"
+			generate_client_yaml "$name" "$yaml_file"
+			;;
+		server)
+			binary="/usr/bin/engarde-server"
+			generate_server_yaml "$name" "$yaml_file"
+			;;
+		*)
+			logger -t engarde "Unknown instance type '$type' for instance '$name'"
+			return 1
+			;;
+	esac
+
+	[ ! -x "$binary" ] && {
+		logger -t engarde "Binary '$binary' not found for instance '$name'"
+		return 1
+	}
+
+	procd_open_instance "engarde_${name}"
+	procd_set_param command "$binary" "$yaml_file"
+	procd_set_param file "/etc/config/engarde"
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_set_param respawn 3600 5 5
+	procd_close_instance
+}
+
+generate_client_yaml() {
+	local name="$1"
+	local yaml_file="$2"
+	local description listen_addr listen_port dst_addr dst_port write_timeout
+	local webmanager_addr webmanager_port webmanager_username webmanager_password
+
+	config_get description "$name" description ""
+	config_get listen_addr "$name" listen_addr
+	config_get listen_port "$name" listen_port
+	config_get dst_addr "$name" dst_addr
+	config_get dst_port "$name" dst_port
+	config_get write_timeout "$name" write_timeout 10
+	config_get webmanager_addr "$name" webmanager_addr "127.0.0.1"
+	config_get webmanager_port "$name" webmanager_port ""
+	config_get webmanager_username "$name" webmanager_username ""
+	config_get webmanager_password "$name" webmanager_password ""
+
+	validate_port "$listen_port" || { logger -t engarde "Invalid listen_port for '$name'"; return 1; }
+	validate_port "$dst_port" || { logger -t engarde "Invalid dst_port for '$name'"; return 1; }
+	validate_int "$write_timeout" || { logger -t engarde "Invalid write_timeout for '$name'"; return 1; }
+
+	cat > "$yaml_file" <<EOF
+client:
+  description: "$(yaml_safe "$description")"
+  listenAddr: "$(yaml_safe "$listen_addr"):${listen_port}"
+  dstAddr: "$(yaml_safe "$dst_addr"):${dst_port}"
+  writeTimeout: ${write_timeout}
+EOF
+
+	# Excluded interfaces
+	_yaml_file="$yaml_file"
+	_yaml_instance="$name"
+	_has_excluded=0
+	config_list_foreach "$name" excluded_interface print_excluded_interface
+
+	# Destination overrides
+	_has_overrides=0
+	config_foreach print_dst_override dst_override
+
+	# Web manager
+	if [ -n "$webmanager_port" ]; then
+		validate_port "$webmanager_port" || { logger -t engarde "Invalid webmanager_port for '$name'"; return 0; }
+		cat >> "$yaml_file" <<EOF
+  webManager:
+    listenAddr: "$(yaml_safe "$webmanager_addr"):${webmanager_port}"
+EOF
+		[ -n "$webmanager_username" ] && echo "    username: \"$(yaml_safe "$webmanager_username")\"" >> "$yaml_file"
+		[ -n "$webmanager_password" ] && echo "    password: \"$(yaml_safe "$webmanager_password")\"" >> "$yaml_file"
+	fi
+}
+
+generate_server_yaml() {
+	local name="$1"
+	local yaml_file="$2"
+	local description listen_addr listen_port dst_addr dst_port
+	local write_timeout client_timeout
+	local webmanager_addr webmanager_port webmanager_username webmanager_password
+
+	config_get description "$name" description ""
+	config_get listen_addr "$name" listen_addr
+	config_get listen_port "$name" listen_port
+	config_get dst_addr "$name" dst_addr
+	config_get dst_port "$name" dst_port
+	config_get write_timeout "$name" write_timeout 10
+	config_get client_timeout "$name" client_timeout 30
+	config_get webmanager_addr "$name" webmanager_addr "127.0.0.1"
+	config_get webmanager_port "$name" webmanager_port ""
+	config_get webmanager_username "$name" webmanager_username ""
+	config_get webmanager_password "$name" webmanager_password ""
+
+	validate_port "$listen_port" || { logger -t engarde "Invalid listen_port for '$name'"; return 1; }
+	validate_port "$dst_port" || { logger -t engarde "Invalid dst_port for '$name'"; return 1; }
+	validate_int "$write_timeout" || { logger -t engarde "Invalid write_timeout for '$name'"; return 1; }
+	validate_int "$client_timeout" || { logger -t engarde "Invalid client_timeout for '$name'"; return 1; }
+
+	cat > "$yaml_file" <<EOF
+server:
+  description: "$(yaml_safe "$description")"
+  listenAddr: "$(yaml_safe "$listen_addr"):${listen_port}"
+  dstAddr: "$(yaml_safe "$dst_addr"):${dst_port}"
+  writeTimeout: ${write_timeout}
+  clientTimeout: ${client_timeout}
+EOF
+
+	# Web manager
+	if [ -n "$webmanager_port" ]; then
+		validate_port "$webmanager_port" || { logger -t engarde "Invalid webmanager_port for '$name'"; return 0; }
+		cat >> "$yaml_file" <<EOF
+  webManager:
+    listenAddr: "$(yaml_safe "$webmanager_addr"):${webmanager_port}"
+EOF
+		[ -n "$webmanager_username" ] && echo "    username: \"$(yaml_safe "$webmanager_username")\"" >> "$yaml_file"
+		[ -n "$webmanager_password" ] && echo "    password: \"$(yaml_safe "$webmanager_password")\"" >> "$yaml_file"
+	fi
+}
+
+stop_service() {
+	[ -n "$YAML_DIR" ] && rm -rf "$YAML_DIR"
+}
+
+service_triggers() {
+	procd_add_reload_trigger "${CONFIGURATION}"
+}
+
+reload_service() {
+	stop
+	start
+}

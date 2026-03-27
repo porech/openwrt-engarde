@@ -1,0 +1,175 @@
+#!/bin/sh
+
+. /lib/functions.sh
+
+# Validate that a value contains only safe characters for a UCI section name
+validate_instance() {
+	echo "$1" | grep -qE '^[a-zA-Z0-9_]+$'
+}
+
+# Validate that a value contains only safe characters for an interface name
+validate_iface() {
+	echo "$1" | grep -qE '^[a-zA-Z0-9_.@-]+$'
+}
+
+# Get the web manager URL for an instance
+# Reads UCI config and returns http://<addr>:<port>
+# If addr is 0.0.0.0, uses 127.0.0.1
+get_webmanager_url() {
+	local instance="$1"
+	local addr port
+
+	config_load engarde
+	config_get addr "$instance" webmanager_addr "127.0.0.1"
+	config_get port "$instance" webmanager_port ""
+
+	[ -z "$port" ] && return 1
+
+	# 0.0.0.0 listens on all interfaces but we connect via loopback
+	[ "$addr" = "0.0.0.0" ] && addr="127.0.0.1"
+
+	echo "http://${addr}:${port}"
+}
+
+# Build wget auth arguments if credentials are configured
+get_auth_header() {
+	local instance="$1"
+	local username password
+
+	config_load engarde
+	config_get username "$instance" webmanager_username ""
+	config_get password "$instance" webmanager_password ""
+
+	if [ -n "$username" ] && [ -n "$password" ]; then
+		echo "--header=Authorization: Basic $(printf '%s:%s' "$username" "$password" | base64 | tr -d '\n')"
+	fi
+}
+
+# Perform a GET request to the engarde API
+api_get() {
+	local instance="$1"
+	local endpoint="$2"
+	local url auth_header
+
+	url="$(get_webmanager_url "$instance")" || {
+		echo '{"error":"web manager not configured"}'
+		return 1
+	}
+
+	auth_header="$(get_auth_header "$instance")"
+
+	wget -q -O - -T 3 ${auth_header:+"$auth_header"} "${url}${endpoint}" 2>/dev/null || {
+		echo '{"error":"web manager unreachable"}'
+		return 1
+	}
+}
+
+# Perform a POST request with JSON body to the engarde API
+api_post() {
+	local instance="$1"
+	local endpoint="$2"
+	local body="$3"
+	local url auth_header
+
+	url="$(get_webmanager_url "$instance")" || {
+		echo '{"error":"web manager not configured"}'
+		return 1
+	}
+
+	auth_header="$(get_auth_header "$instance")"
+
+	wget -q -O - -T 3 ${auth_header:+"$auth_header"} \
+		--post-data="$body" \
+		"${url}${endpoint}" 2>/dev/null || {
+		echo '{"error":"web manager unreachable"}'
+		return 1
+	}
+}
+
+# Callback for config_foreach: print an instance as JSON
+_list_first=1
+print_instance() {
+	local name="$1"
+	local type enabled webmanager_port
+
+	config_get type "$name" type ""
+	config_get_bool enabled "$name" enabled 0
+	config_get webmanager_port "$name" webmanager_port ""
+
+	[ "$_list_first" -eq 0 ] && echo ","
+	_list_first=0
+
+	printf '{"name":"%s","type":"%s","enabled":%s,"has_webmanager":%s}' \
+		"$name" \
+		"$type" \
+		"$([ "$enabled" -eq 1 ] && echo 'true' || echo 'false')" \
+		"$([ -n "$webmanager_port" ] && echo 'true' || echo 'false')"
+}
+
+# List all configured instances with their type and enabled status
+do_list_instances() {
+	_list_first=1
+
+	config_load engarde
+
+	echo '{"instances":['
+	config_foreach print_instance instance
+	echo ']}'
+}
+
+case "$1" in
+	list)
+		# rpcd calls "list" to discover available methods and their parameters
+		echo '{
+			"get_status": {"instance": "str"},
+			"include_interface": {"instance": "str", "interface": "str"},
+			"exclude_interface": {"instance": "str", "interface": "str"},
+			"swap_exclusion": {"instance": "str", "interface": "str"},
+			"reset_exclusions": {"instance": "str"},
+			"list_instances": {}
+		}'
+		;;
+	call)
+		case "$2" in
+			get_status)
+				read -r input
+				instance="$(echo "$input" | jsonfilter -e '@.instance')"
+				validate_instance "$instance" || { echo '{"error":"invalid instance"}'; exit 1; }
+				api_get "$instance" "/api/v1/get-list"
+				;;
+			include_interface)
+				read -r input
+				instance="$(echo "$input" | jsonfilter -e '@.instance')"
+				iface="$(echo "$input" | jsonfilter -e '@.interface')"
+				validate_instance "$instance" || { echo '{"error":"invalid instance"}'; exit 1; }
+				validate_iface "$iface" || { echo '{"error":"invalid interface"}'; exit 1; }
+				api_post "$instance" "/api/v1/include" "{\"interface\":\"${iface}\"}"
+				;;
+			exclude_interface)
+				read -r input
+				instance="$(echo "$input" | jsonfilter -e '@.instance')"
+				iface="$(echo "$input" | jsonfilter -e '@.interface')"
+				validate_instance "$instance" || { echo '{"error":"invalid instance"}'; exit 1; }
+				validate_iface "$iface" || { echo '{"error":"invalid interface"}'; exit 1; }
+				api_post "$instance" "/api/v1/exclude" "{\"interface\":\"${iface}\"}"
+				;;
+			swap_exclusion)
+				read -r input
+				instance="$(echo "$input" | jsonfilter -e '@.instance')"
+				iface="$(echo "$input" | jsonfilter -e '@.interface')"
+				validate_instance "$instance" || { echo '{"error":"invalid instance"}'; exit 1; }
+				validate_iface "$iface" || { echo '{"error":"invalid interface"}'; exit 1; }
+				api_post "$instance" "/api/v1/swap-exclusion" "{\"interface\":\"${iface}\"}"
+				;;
+			reset_exclusions)
+				read -r input
+				instance="$(echo "$input" | jsonfilter -e '@.instance')"
+				validate_instance "$instance" || { echo '{"error":"invalid instance"}'; exit 1; }
+				api_get "$instance" "/api/v1/reset-exclusions"
+				;;
+			list_instances)
+				do_list_instances
+				;;
+		esac
+		;;
+esac
