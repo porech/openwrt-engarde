@@ -10,15 +10,30 @@ OpenWrt package feed for [Engarde](https://github.com/porech/engarde), a WireGua
 
 ## Install on a running OpenWrt router
 
-SSH into your router and add the package feed:
+Pre-built packages are available for OpenWrt 23.05. SSH into your router and add the package repository for your architecture:
 
+**x86_64** (VMs, x86 appliances):
 ```sh
-echo "src-git engarde https://github.com/porech/openwrt-engarde.git" >> /etc/opkg/customfeeds.conf
+echo "src/gz engarde https://engarde.linuxzogno.org/builds/openwrt/23.05/x86_64" >> /etc/opkg/customfeeds.conf
+```
+
+**aarch64_generic** (modern ARM routers):
+```sh
+echo "src/gz engarde https://engarde.linuxzogno.org/builds/openwrt/23.05/aarch64_generic" >> /etc/opkg/customfeeds.conf
+```
+
+**arm_cortex-a7_neon-vfpv4** (older ARM routers):
+```sh
+echo "src/gz engarde https://engarde.linuxzogno.org/builds/openwrt/23.05/arm_cortex-a7_neon-vfpv4" >> /etc/opkg/customfeeds.conf
+```
+
+Then install:
+```sh
 opkg update
 opkg install engarde-client luci-app-engarde
 ```
 
-Then open LuCI and navigate to **Services → Engarde** to configure your instances.
+Open LuCI and navigate to **Services → Engarde** to configure your instances.
 
 ## Build from source (OpenWrt SDK)
 
