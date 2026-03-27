@@ -57,6 +57,11 @@ GO_PKG_LDFLAGS:=-s -w
 GO_PKG_VARS+=CGO_ENABLED=0
 
 define Build/Compile
+	# Inject pre-built frontend assets if available (CI provides them)
+	if [ -d "$(TOPDIR)/frontend-assets" ]; then \
+		mkdir -p $(PKG_BUILD_DIR)/internal/assets/browser && \
+		$(CP) $(TOPDIR)/frontend-assets/* $(PKG_BUILD_DIR)/internal/assets/browser/; \
+	fi
 	$(call GoPackage/Build/Compile)
 endef
 
