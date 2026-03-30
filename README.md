@@ -27,6 +27,11 @@ echo "src/gz engarde https://engarde.linuxzogno.org/builds/openwrt/23.05/aarch64
 echo "src/gz engarde https://engarde.linuxzogno.org/builds/openwrt/23.05/arm_cortex-a7_neon-vfpv4" >> /etc/opkg/customfeeds.conf
 ```
 
+Add the repository signing key:
+```sh
+wget -qO /etc/opkg/keys/f59c896b325e81c9 https://engarde.linuxzogno.org/builds/openwrt/23.05/engarde-repo.pub
+```
+
 Then install:
 ```sh
 opkg update

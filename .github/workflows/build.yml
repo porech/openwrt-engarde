@@ -129,8 +129,25 @@ jobs:
             cp "$dir"/*.ipk "repo/${arch}/"
           done
 
-      - name: Generate package indexes
+      - name: Generate and sign package indexes
+        env:
+          USIGN_SEC_KEY: ${{ secrets.USIGN_SEC_KEY }}
+          USIGN_PUB_KEY: ${{ secrets.USIGN_PUB_KEY }}
         run: |
+          # Install usign
+          sudo apt-get -qq install -y usign 2>/dev/null || {
+            # Build from source if not packaged
+            git clone https://git.openwrt.org/project/usign.git /tmp/usign-src
+            cd /tmp/usign-src && cmake . && make && sudo cp usign /usr/local/bin/
+            cd "$OLDPWD"
+          }
+
+          # Write signing key (if available)
+          if [ -n "$USIGN_SEC_KEY" ]; then
+            echo "$USIGN_SEC_KEY" > /tmp/usign.sec
+            echo "$USIGN_PUB_KEY" > /tmp/usign.pub
+          fi
+
           for arch_dir in repo/*/; do
             cd "$arch_dir"
             for ipk in *.ipk; do
@@ -145,8 +162,30 @@ jobs:
               echo ""
             done > Packages
             gzip -9c Packages > Packages.gz
+
+            # Sign the Packages file if key is available
+            if [ -f /tmp/usign.sec ]; then
+              usign -S -m Packages -s /tmp/usign.sec
+              echo "Signed Packages for $(basename "$arch_dir")"
+            fi
+
             cd "$OLDPWD"
           done
+
+          rm -f /tmp/usign.sec
+
+      - name: Upload public key
+        env:
+          USIGN_PUB_KEY: ${{ secrets.USIGN_PUB_KEY }}
+          UPLOAD_KEY: ${{ secrets.UPLOAD_KEY }}
+          UPLOAD_URL: ${{ vars.UPLOAD_URL }}
+        if: env.USIGN_PUB_KEY != ''
+        run: |
+          echo "$USIGN_PUB_KEY" > /tmp/engarde-repo.pub
+          curl -4 -f -F "file=@/tmp/engarde-repo.pub" \
+            -F "path=openwrt/23.05/engarde-repo.pub" \
+            -F "key=${UPLOAD_KEY}" \
+            "${UPLOAD_URL}"
 
       - name: Upload to artifact server
         env:
