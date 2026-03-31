@@ -56,8 +56,11 @@ function renderClientStatus(instanceName, data) {
 	var excluded = interfaces.filter(function (i) { return i.status === 'excluded'; });
 
 	function makeIfaceRow(iface, actions) {
+		var nameDisplay = iface.label
+			? E('span', {}, [iface.label, ' ', E('span', { 'style': 'color:#999;font-size:0.85em' }, '(' + iface.name + ')')])
+			: iface.name;
 		var cells = [
-			E('td', {}, iface.name),
+			E('td', {}, nameDisplay),
 			E('td', {}, iface.senderAddress || '-'),
 			E('td', {}, iface.dstAddress || '-'),
 			E('td', {}, renderLastPacket(iface.last))

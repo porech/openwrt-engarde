@@ -75,6 +75,14 @@ return view.extend({
 		o.optional = true;
 		o.depends('type', 'client');
 
+		// Client-only: interface labels
+		o = s.option(form.DynamicList, 'interface_label', _('Interface Labels'),
+			_('Human-readable labels for network interfaces, shown in the status page and embedded dashboard. ' +
+			  'Format: interface=label (e.g. mv0=Vodafone, mv1=TIM).'));
+		o.optional = true;
+		o.depends('type', 'client');
+		o.placeholder = 'mv0=ISP Name';
+
 		// Server-only: client timeout
 		o = s.option(form.Value, 'client_timeout', _('Client Timeout'),
 			_('Seconds of inactivity before a client is considered disconnected.'));

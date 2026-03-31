@@ -34,6 +34,7 @@ _yaml_file=""
 _yaml_instance=""
 _has_excluded=0
 _has_overrides=0
+_has_labels=0
 
 # Callback for config_list_foreach: write an excluded interface to YAML
 print_excluded_interface() {
@@ -66,6 +67,19 @@ print_dst_override() {
 	fi
 	echo "    - ifName: \"$(yaml_safe "$override_interface")\"" >> "$_yaml_file"
 	echo "      dstAddr: \"$(yaml_safe "$override_dst_addr"):${override_dst_port}\"" >> "$_yaml_file"
+}
+
+# Callback for config_list_foreach: write an interface label to YAML
+print_interface_label() {
+	local value="$1"
+	local ifname="${value%%=*}"
+	local label="${value#*=}"
+	[ -z "$ifname" ] || [ -z "$label" ] || [ "$ifname" = "$value" ] && return 0
+	if [ "$_has_labels" -eq 0 ]; then
+		echo "  interfaceLabels:" >> "$_yaml_file"
+		_has_labels=1
+	fi
+	echo "    $(yaml_safe "$ifname"): \"$(yaml_safe "$label")\"" >> "$_yaml_file"
 }
 
 start_service() {
@@ -156,6 +170,10 @@ EOF
 	_yaml_instance="$name"
 	_has_excluded=0
 	config_list_foreach "$name" excluded_interface print_excluded_interface
+
+	# Interface labels
+	_has_labels=0
+	config_list_foreach "$name" interface_label print_interface_label
 
 	# Destination overrides
 	_has_overrides=0
