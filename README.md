@@ -10,26 +10,27 @@ OpenWrt package feed for [Engarde](https://github.com/porech/engarde), a WireGua
 
 ## Install on a running OpenWrt router
 
-Pre-built packages are available for OpenWrt 23.05. SSH into your router and add the package repository for your architecture:
+Pre-built packages are available for OpenWrt 23.05. SSH into your router, add the signing key and the package repository for your architecture:
+
+```sh
+# Add signing key
+wget -qO /etc/opkg/keys/f59c896b325e81c9 \
+  https://porech.github.io/openwrt-engarde/engarde-repo.pub
+```
 
 **x86_64** (VMs, x86 appliances):
 ```sh
-echo "src/gz engarde https://engarde.linuxzogno.org/builds/openwrt/23.05/x86_64" >> /etc/opkg/customfeeds.conf
+echo "src/gz engarde https://porech.github.io/openwrt-engarde/x86_64" >> /etc/opkg/customfeeds.conf
 ```
 
 **aarch64_generic** (modern ARM routers):
 ```sh
-echo "src/gz engarde https://engarde.linuxzogno.org/builds/openwrt/23.05/aarch64_generic" >> /etc/opkg/customfeeds.conf
+echo "src/gz engarde https://porech.github.io/openwrt-engarde/aarch64_generic" >> /etc/opkg/customfeeds.conf
 ```
 
 **arm_cortex-a7_neon-vfpv4** (older ARM routers):
 ```sh
-echo "src/gz engarde https://engarde.linuxzogno.org/builds/openwrt/23.05/arm_cortex-a7_neon-vfpv4" >> /etc/opkg/customfeeds.conf
-```
-
-Add the repository signing key:
-```sh
-wget -qO /etc/opkg/keys/f59c896b325e81c9 https://engarde.linuxzogno.org/builds/openwrt/23.05/engarde-repo.pub
+echo "src/gz engarde https://porech.github.io/openwrt-engarde/arm_cortex-a7_neon-vfpv4" >> /etc/opkg/customfeeds.conf
 ```
 
 Then install:
