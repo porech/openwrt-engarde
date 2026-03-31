@@ -225,7 +225,7 @@ return view.extend({
 							]);
 						}
 
-						dom.content(div, content.childNodes);
+						dom.content(div, Array.from(content.childNodes));
 					}).catch(function () {
 						var div = instanceDivs[inst.name].div;
 						dom.content(div, [
