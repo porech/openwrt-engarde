@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
   frontend:
     runs-on: ubuntu-latest
@@ -174,32 +179,28 @@ jobs:
 
           rm -f /tmp/usign.sec
 
-      - name: Upload public key
+      - name: Add public key to repo
         env:
           USIGN_PUB_KEY: ${{ secrets.USIGN_PUB_KEY }}
-          UPLOAD_KEY: ${{ secrets.UPLOAD_KEY }}
-          UPLOAD_URL: ${{ vars.UPLOAD_URL }}
         if: env.USIGN_PUB_KEY != ''
         run: |
-          echo "$USIGN_PUB_KEY" > /tmp/engarde-repo.pub
-          curl -4 -f -F "file=@/tmp/engarde-repo.pub" \
-            -F "path=openwrt/23.05/engarde-repo.pub" \
-            -F "key=${UPLOAD_KEY}" \
-            "${UPLOAD_URL}"
+          echo "$USIGN_PUB_KEY" > repo/engarde-repo.pub
 
-      - name: Upload to artifact server
-        env:
-          UPLOAD_KEY: ${{ secrets.UPLOAD_KEY }}
-          UPLOAD_URL: ${{ vars.UPLOAD_URL }}
-        run: |
-          for arch_dir in repo/*/; do
-            arch=$(basename "$arch_dir")
-            for file in "$arch_dir"/*; do
-              filename=$(basename "$file")
-              echo "Uploading ${arch}/${filename}"
-              curl -4 -f -F "file=@${file}" \
-                -F "path=openwrt/23.05/${arch}/${filename}" \
-                -F "key=${UPLOAD_KEY}" \
-                "${UPLOAD_URL}"
-            done
-          done
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: repo
+
+  deploy:
+    needs: upload
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
