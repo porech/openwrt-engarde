@@ -12,6 +12,8 @@ permissions:
 jobs:
   frontend:
     runs-on: ubuntu-latest
+    outputs:
+      engarde-hash: ${{ steps.engarde-version.outputs.hash }}
     steps:
       - name: Checkout engarde source
         uses: actions/checkout@v4
@@ -28,6 +30,12 @@ jobs:
         run: |
           cd engarde-src
           make frontend
+
+      - name: Get engarde commit hash
+        id: engarde-version
+        run: |
+          cd engarde-src
+          echo "hash=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Upload frontend assets
         uses: actions/upload-artifact@v4
@@ -90,11 +98,14 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install engarde-client engarde-server luci-app-engarde
 
-      - name: Override PKG_RELEASE with commit count
+      - name: Override PKG_RELEASE and inject engarde version
         run: |
           RELEASE=$(git rev-list --count HEAD)
           sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" /tmp/sdk/feeds/engarde/engarde/Makefile
           sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" /tmp/sdk/feeds/engarde/luci-app-engarde/Makefile 2>/dev/null || true
+          # Inject engarde commit hash as version (matches upstream build format)
+          ENGARDE_HASH="${{ needs.frontend.outputs.engarde-hash }}"
+          sed -i "s/^GO_PKG_LDFLAGS:=.*/GO_PKG_LDFLAGS:=-s -w -X 'main.Version=${ENGARDE_HASH}'/" /tmp/sdk/feeds/engarde/engarde/Makefile
 
       - name: Build packages
         run: |
