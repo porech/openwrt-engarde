@@ -55,6 +55,7 @@ endef
 
 GO_PKG_LDFLAGS:=-s -w
 GO_PKG_VARS+=CGO_ENABLED=0
+GO_PKG_ENABLE_PIE:=0
 
 define Build/Compile
 	# Inject pre-built frontend assets if available (CI provides them)
