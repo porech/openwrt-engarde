@@ -8,9 +8,20 @@ OpenWrt package feed for [Engarde](https://github.com/porech/engarde), a WireGua
 - **engarde-server** — engarde server binary (depends on engarde-client)
 - **luci-app-engarde** — LuCI web interface for configuring instances and monitoring real-time tunnel status
 
+## Supported OpenWrt versions
+
+Pre-built packages are available for the following OpenWrt releases:
+
+| OpenWrt | Status | Architectures |
+|---------|--------|---------------|
+| 25.12   | Current stable | x86_64, aarch64_generic, arm_cortex-a7_neon-vfpv4 |
+| 24.10   | Old stable | x86_64, aarch64_generic, arm_cortex-a7_neon-vfpv4 |
+
+Packages are rebuilt automatically on every push to `main` against all supported releases.
+
 ## Install on a running OpenWrt router
 
-Pre-built packages are available for OpenWrt 23.05. SSH into your router, add the signing key and the package repository for your architecture:
+SSH into your router, add the signing key and the package repository for your architecture. Replace `RELEASE` with your OpenWrt version branch (`24.10` or `25.12`).
 
 ```sh
 # Add signing key
@@ -20,17 +31,22 @@ wget -qO /etc/opkg/keys/f59c896b325e81c9 \
 
 **x86_64** (VMs, x86 appliances):
 ```sh
-echo "src/gz engarde https://porech.github.io/openwrt-engarde/x86_64" >> /etc/opkg/customfeeds.conf
+echo "src/gz engarde https://porech.github.io/openwrt-engarde/RELEASE/x86_64" >> /etc/opkg/customfeeds.conf
 ```
 
 **aarch64_generic** (modern ARM routers):
 ```sh
-echo "src/gz engarde https://porech.github.io/openwrt-engarde/aarch64_generic" >> /etc/opkg/customfeeds.conf
+echo "src/gz engarde https://porech.github.io/openwrt-engarde/RELEASE/aarch64_generic" >> /etc/opkg/customfeeds.conf
 ```
 
 **arm_cortex-a7_neon-vfpv4** (older ARM routers):
 ```sh
-echo "src/gz engarde https://porech.github.io/openwrt-engarde/arm_cortex-a7_neon-vfpv4" >> /etc/opkg/customfeeds.conf
+echo "src/gz engarde https://porech.github.io/openwrt-engarde/RELEASE/arm_cortex-a7_neon-vfpv4" >> /etc/opkg/customfeeds.conf
+```
+
+For example, on OpenWrt 25.12 with x86_64:
+```sh
+echo "src/gz engarde https://porech.github.io/openwrt-engarde/25.12/x86_64" >> /etc/opkg/customfeeds.conf
 ```
 
 Then install:

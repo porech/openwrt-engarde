@@ -49,19 +49,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: x86_64
+        openwrt:
+          - version: "24.10.6"
+            branch: "24.10"
+          - version: "25.12.2"
+            branch: "25.12"
+        arch:
+          - name: x86_64
             target: x86
             subtarget: "64"
-            sdk: openwrt-sdk-23.05.5-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          - arch: aarch64_generic
+          - name: aarch64_generic
             target: armsr
             subtarget: armv8
-            sdk: openwrt-sdk-23.05.5-armsr-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          - arch: arm_cortex-a7_neon-vfpv4
+          - name: arm_cortex-a7_neon-vfpv4
             target: sunxi
             subtarget: cortexa7
-            sdk: openwrt-sdk-23.05.5-sunxi-cortexa7_gcc-12.3.0_musl_eabi.Linux-x86_64.tar.xz
 
     steps:
       - name: Checkout
@@ -73,22 +75,39 @@ jobs:
           name: frontend-assets
           path: frontend-assets
 
+      - name: Determine SDK filename
+        id: sdk-name
+        run: |
+          # SDK naming changed between versions; find the correct filename
+          VERSION="${{ matrix.openwrt.version }}"
+          TARGET="${{ matrix.arch.target }}"
+          SUBTARGET="${{ matrix.arch.subtarget }}"
+          BASE_URL="https://downloads.openwrt.org/releases/${VERSION}/targets/${TARGET}/${SUBTARGET}"
+          # Fetch the directory listing and find the SDK tarball
+          SDK_FILE=$(curl -sL "${BASE_URL}/sha256sums" | grep -oE 'openwrt-sdk-[^ ]+\.tar\.[a-z]+' | head -1)
+          if [ -z "$SDK_FILE" ]; then
+            echo "ERROR: Could not find SDK for ${VERSION} ${TARGET}/${SUBTARGET}"
+            exit 1
+          fi
+          echo "url=${BASE_URL}/${SDK_FILE}" >> "$GITHUB_OUTPUT"
+          echo "file=${SDK_FILE}" >> "$GITHUB_OUTPUT"
+
       - name: Cache OpenWrt SDK
         uses: actions/cache@v4
         id: cache-sdk
         with:
-          path: sdk.tar.xz
-          key: openwrt-sdk-23.05.5-${{ matrix.target }}-${{ matrix.subtarget }}
+          path: sdk.tar.*
+          key: openwrt-sdk-${{ matrix.openwrt.version }}-${{ matrix.arch.target }}-${{ matrix.arch.subtarget }}
 
       - name: Download OpenWrt SDK
         if: steps.cache-sdk.outputs.cache-hit != 'true'
         run: |
-          wget -q "https://downloads.openwrt.org/releases/23.05.5/targets/${{ matrix.target }}/${{ matrix.subtarget }}/${{ matrix.sdk }}" -O sdk.tar.xz
+          wget -q "${{ steps.sdk-name.outputs.url }}" -O "${{ steps.sdk-name.outputs.file }}"
 
       - name: Extract SDK
         run: |
           mkdir -p /tmp/sdk
-          tar xf sdk.tar.xz --strip-components=1 -C /tmp/sdk
+          tar xf ${{ steps.sdk-name.outputs.file }} --strip-components=1 -C /tmp/sdk
 
       - name: Configure feeds
         run: |
@@ -125,7 +144,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: packages-${{ matrix.arch }}
+          name: packages-${{ matrix.openwrt.branch }}-${{ matrix.arch.name }}
           path: packages/*.ipk
 
   upload:
@@ -137,12 +156,15 @@ jobs:
         with:
           path: artifacts
 
-      - name: Organize packages by architecture
+      - name: Organize packages by version and architecture
         run: |
           for dir in artifacts/packages-*/; do
-            arch=$(basename "$dir" | sed 's/packages-//')
-            mkdir -p "repo/${arch}"
-            cp "$dir"/*.ipk "repo/${arch}/"
+            # Extract branch and arch from "packages-25.12-x86_64"
+            name=$(basename "$dir" | sed 's/packages-//')
+            branch="${name%%-*}"
+            arch="${name#*-}"
+            mkdir -p "repo/${branch}/${arch}"
+            cp "$dir"/*.ipk "repo/${branch}/${arch}/"
           done
 
       - name: Generate and sign package indexes
@@ -164,7 +186,7 @@ jobs:
             echo "$USIGN_PUB_KEY" > /tmp/usign.pub
           fi
 
-          for arch_dir in repo/*/; do
+          for arch_dir in repo/*/*/; do
             cd "$arch_dir"
             for ipk in *.ipk; do
               [ -f "$ipk" ] || continue
