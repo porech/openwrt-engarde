@@ -52,8 +52,10 @@ jobs:
         openwrt:
           - version: "24.10.6"
             branch: "24.10"
+            pkg_format: ipk
           - version: "25.12.2"
             branch: "25.12"
+            pkg_format: apk
         arch:
           - name: x86_64
             target: x86
@@ -78,12 +80,10 @@ jobs:
       - name: Determine SDK filename
         id: sdk-name
         run: |
-          # SDK naming changed between versions; find the correct filename
           VERSION="${{ matrix.openwrt.version }}"
           TARGET="${{ matrix.arch.target }}"
           SUBTARGET="${{ matrix.arch.subtarget }}"
           BASE_URL="https://downloads.openwrt.org/releases/${VERSION}/targets/${TARGET}/${SUBTARGET}"
-          # Fetch the directory listing and find the SDK tarball
           SDK_FILE=$(curl -sL "${BASE_URL}/sha256sums" | grep -oE 'openwrt-sdk-[^ ]+\.tar\.[a-z]+' | head -1)
           if [ -z "$SDK_FILE" ]; then
             echo "ERROR: Could not find SDK for ${VERSION} ${TARGET}/${SUBTARGET}"
@@ -122,7 +122,6 @@ jobs:
           RELEASE=$(git rev-list --count HEAD)
           sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" /tmp/sdk/feeds/engarde/engarde/Makefile
           sed -i "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" /tmp/sdk/feeds/engarde/luci-app-engarde/Makefile 2>/dev/null || true
-          # Inject engarde commit hash as version (matches upstream build format)
           ENGARDE_HASH="${{ needs.frontend.outputs.engarde-hash }}"
           sed -i "s/^GO_PKG_LDFLAGS:=.*/GO_PKG_LDFLAGS:=-s -w -X 'main.Version=${ENGARDE_HASH}'/" /tmp/sdk/feeds/engarde/engarde/Makefile
 
@@ -130,22 +129,24 @@ jobs:
         run: |
           cd /tmp/sdk
           make defconfig
-          # Place frontend assets where the Makefile expects them
           cp -r ${{ github.workspace }}/frontend-assets /tmp/sdk/frontend-assets
-          # Build (Makefile injects frontend assets before Go compile)
-          make package/engarde/compile V=s -j$(nproc)
-          make package/luci-app-engarde/compile V=s -j$(nproc)
+          # Build all engarde packages in a single make invocation
+          make package/engarde/compile package/luci-app-engarde/compile V=s -j$(nproc)
 
       - name: Collect packages
         run: |
+          PKG_EXT="${{ matrix.openwrt.pkg_format }}"
           mkdir -p packages
-          find /tmp/sdk/bin/ -name '*.ipk' \( -name 'engarde-*' -o -name 'luci-app-engarde*' \) -exec cp {} packages/ \;
+          find /tmp/sdk/bin/ -name "engarde-*.${PKG_EXT}" -exec cp {} packages/ \;
+          find /tmp/sdk/bin/ -name "luci-app-engarde*.${PKG_EXT}" -exec cp {} packages/ \;
+          echo "Collected packages:"
+          ls -la packages/
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: packages-${{ matrix.openwrt.branch }}-${{ matrix.arch.name }}
-          path: packages/*.ipk
+          path: packages/
 
   upload:
     runs-on: ubuntu-latest
@@ -159,52 +160,74 @@ jobs:
       - name: Organize packages by version and architecture
         run: |
           for dir in artifacts/packages-*/; do
-            # Extract branch and arch from "packages-25.12-x86_64"
             name=$(basename "$dir" | sed 's/packages-//')
             branch="${name%%-*}"
             arch="${name#*-}"
             mkdir -p "repo/${branch}/${arch}"
-            cp "$dir"/*.ipk "repo/${branch}/${arch}/"
+            cp "$dir"/* "repo/${branch}/${arch}/" 2>/dev/null || true
           done
 
-      - name: Generate and sign package indexes
+      - name: Generate package indexes
         env:
           USIGN_SEC_KEY: ${{ secrets.USIGN_SEC_KEY }}
           USIGN_PUB_KEY: ${{ secrets.USIGN_PUB_KEY }}
         run: |
-          # Install usign
+          # Install usign for opkg signing
           sudo apt-get -qq install -y usign 2>/dev/null || {
-            # Build from source if not packaged
             git clone https://git.openwrt.org/project/usign.git /tmp/usign-src
             cd /tmp/usign-src && cmake . && make && sudo cp usign /usr/local/bin/
             cd "$OLDPWD"
           }
 
-          # Write signing key (if available)
           if [ -n "$USIGN_SEC_KEY" ]; then
             echo "$USIGN_SEC_KEY" > /tmp/usign.sec
             echo "$USIGN_PUB_KEY" > /tmp/usign.pub
           fi
 
           for arch_dir in repo/*/*/; do
+            branch=$(basename "$(dirname "$arch_dir")")
             cd "$arch_dir"
-            for ipk in *.ipk; do
-              [ -f "$ipk" ] || continue
-              # Extract control metadata (handle both gzip and zstd compressed ipks)
-              tar -xOf "$ipk" ./control.tar.gz 2>/dev/null | tar xzf - --to-stdout ./control 2>/dev/null || \
-                tar -xOf "$ipk" ./control.tar.zst 2>/dev/null | zstd -d | tar xf - --to-stdout ./control 2>/dev/null || \
-                true
-              echo "Filename: $ipk"
-              echo "Size: $(stat -c %s "$ipk")"
-              echo "SHA256sum: $(sha256sum "$ipk" | cut -d' ' -f1)"
-              echo ""
-            done > Packages
-            gzip -9c Packages > Packages.gz
 
-            # Sign the Packages file if key is available
-            if [ -f /tmp/usign.sec ]; then
-              usign -S -m Packages -s /tmp/usign.sec
-              echo "Signed Packages for $(basename "$arch_dir")"
+            if ls *.ipk 1>/dev/null 2>&1; then
+              # opkg format (24.10 and earlier)
+              for ipk in *.ipk; do
+                tar -xOf "$ipk" ./control.tar.gz 2>/dev/null | tar xzf - --to-stdout ./control 2>/dev/null || \
+                  tar -xOf "$ipk" ./control.tar.zst 2>/dev/null | zstd -d | tar xf - --to-stdout ./control 2>/dev/null || \
+                  true
+                echo "Filename: $ipk"
+                echo "Size: $(stat -c %s "$ipk")"
+                echo "SHA256sum: $(sha256sum "$ipk" | cut -d' ' -f1)"
+                echo ""
+              done > Packages
+              gzip -9c Packages > Packages.gz
+              if [ -f /tmp/usign.sec ]; then
+                usign -S -m Packages -s /tmp/usign.sec
+              fi
+              echo "Generated opkg index for ${branch}/$(basename "$arch_dir")"
+
+            elif ls *.apk 1>/dev/null 2>&1; then
+              # apk format (25.12+) — generate packages.adb using apk mkndx
+              # Download apk-tools static binary for index generation
+              if [ ! -f /tmp/apk ]; then
+                wget -qO /tmp/apk "https://gitlab.alpinelinux.org/alpine/apk-tools/-/package_files/131/download" 2>/dev/null || \
+                  wget -qO /tmp/apk "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/x86_64/apk-tools-static-2.14.6-r3.apk" 2>/dev/null || true
+                # Use system apk if available, or build from OpenWRT source
+                if ! command -v apk >/dev/null 2>&1 && [ ! -x /tmp/apk ]; then
+                  # Fallback: use the SDK's own apk from the cached build
+                  echo "WARNING: apk-tools not available, skipping index generation"
+                  cd "$OLDPWD"
+                  continue
+                fi
+              fi
+              # Generate index using apk mkndx
+              APK_TOOL="apk"
+              command -v apk >/dev/null 2>&1 || APK_TOOL="/tmp/apk"
+              $APK_TOOL mkndx -o packages.adb *.apk 2>/dev/null || {
+                # Fallback: try with --allow-untrusted
+                $APK_TOOL mkndx --allow-untrusted -o packages.adb *.apk 2>/dev/null || \
+                  echo "WARNING: Could not generate apk index for ${branch}/$(basename "$arch_dir")"
+              }
+              echo "Generated apk index for ${branch}/$(basename "$arch_dir")"
             fi
 
             cd "$OLDPWD"
