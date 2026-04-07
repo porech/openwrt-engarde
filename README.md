@@ -12,45 +12,53 @@ OpenWrt package feed for [Engarde](https://github.com/porech/engarde), a WireGua
 
 Pre-built packages are available for the following OpenWrt releases:
 
-| OpenWrt | Status | Architectures |
-|---------|--------|---------------|
-| 25.12   | Current stable | x86_64, aarch64_generic, arm_cortex-a7_neon-vfpv4 |
-| 24.10   | Old stable | x86_64, aarch64_generic, arm_cortex-a7_neon-vfpv4 |
+| OpenWrt | Status | Package format | Architectures |
+|---------|--------|----------------|---------------|
+| 25.12   | Current stable | apk | x86_64, aarch64_generic, arm_cortex-a7_neon-vfpv4 |
+| 24.10   | Old stable | ipk (opkg) | x86_64, aarch64_generic, arm_cortex-a7_neon-vfpv4 |
 
 Packages are rebuilt automatically on every push to `main` against all supported releases.
 
-## Install on a running OpenWrt router
+### Available architectures
 
-SSH into your router, add the signing key and the package repository for your architecture. Replace `RELEASE` with your OpenWrt version branch (`24.10` or `25.12`).
+| Architecture | Devices |
+|-------------|---------|
+| `x86_64` | VMs, x86 mini-PCs |
+| `aarch64_generic` | Modern ARM routers (RPi 4, NanoPi, etc.) |
+| `arm_cortex-a7_neon-vfpv4` | Older ARM routers |
+
+## Install on OpenWrt 25.12 (apk)
+
+SSH into your router and run:
+
+```sh
+# Add signing key
+wget -qO /etc/apk/keys/engarde-apk.pem \
+  https://porech.github.io/openwrt-engarde/engarde-apk.pem
+
+# Add feed
+ARCH=$(cat /etc/apk/arch)
+echo "https://porech.github.io/openwrt-engarde/25.12/${ARCH}/packages.adb" \
+  >> /etc/apk/repositories.d/customfeeds.list
+
+# Install
+apk update
+apk add engarde-client luci-app-engarde
+```
+
+## Install on OpenWrt 24.10 (opkg)
 
 ```sh
 # Add signing key
 wget -qO /etc/opkg/keys/f59c896b325e81c9 \
   https://porech.github.io/openwrt-engarde/engarde-repo.pub
-```
 
-**x86_64** (VMs, x86 appliances):
-```sh
-echo "src/gz engarde https://porech.github.io/openwrt-engarde/RELEASE/x86_64" >> /etc/opkg/customfeeds.conf
-```
+# Add feed
+ARCH=$(. /etc/os-release; echo $OPENWRT_ARCH)
+echo "src/gz engarde https://porech.github.io/openwrt-engarde/24.10/${ARCH}" \
+  >> /etc/opkg/customfeeds.conf
 
-**aarch64_generic** (modern ARM routers):
-```sh
-echo "src/gz engarde https://porech.github.io/openwrt-engarde/RELEASE/aarch64_generic" >> /etc/opkg/customfeeds.conf
-```
-
-**arm_cortex-a7_neon-vfpv4** (older ARM routers):
-```sh
-echo "src/gz engarde https://porech.github.io/openwrt-engarde/RELEASE/arm_cortex-a7_neon-vfpv4" >> /etc/opkg/customfeeds.conf
-```
-
-For example, on OpenWrt 25.12 with x86_64:
-```sh
-echo "src/gz engarde https://porech.github.io/openwrt-engarde/25.12/x86_64" >> /etc/opkg/customfeeds.conf
-```
-
-Then install:
-```sh
+# Install
 opkg update
 opkg install engarde-client luci-app-engarde
 ```
