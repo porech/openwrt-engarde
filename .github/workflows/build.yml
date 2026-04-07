@@ -126,9 +126,16 @@ jobs:
           sed -i "s/^GO_PKG_LDFLAGS:=.*/GO_PKG_LDFLAGS:=-s -w -X 'main.Version=${ENGARDE_HASH}'/" /tmp/sdk/feeds/engarde/engarde/Makefile
 
       - name: Build packages
+        env:
+          APK_SIGNING_KEY: ${{ secrets.APK_SIGNING_KEY }}
         run: |
           cd /tmp/sdk
           make defconfig
+          # Inject our permanent signing key (defconfig generates an ephemeral one)
+          if [ -n "$APK_SIGNING_KEY" ] && [ "${{ matrix.openwrt.pkg_format }}" = "apk" ]; then
+            echo "$APK_SIGNING_KEY" > /tmp/sdk/private-key.pem
+            openssl ec -in /tmp/sdk/private-key.pem -pubout > /tmp/sdk/public-key.pem 2>/dev/null
+          fi
           cp -r ${{ github.workspace }}/frontend-assets /tmp/sdk/frontend-assets
           make package/engarde/compile package/luci-app-engarde/compile V=s -j$(nproc)
 
@@ -142,7 +149,7 @@ jobs:
           # Generate index using SDK tools while they're available
           if [ "$PKG_EXT" = "apk" ]; then
             cd packages
-            /tmp/sdk/staging_dir/host/bin/apk mkndx --allow-untrusted -o packages.adb *.apk
+            /tmp/sdk/staging_dir/host/bin/apk mkndx -o packages.adb *.apk
             cd ..
           fi
 
@@ -213,12 +220,19 @@ jobs:
 
           rm -f /tmp/usign.sec
 
-      - name: Add public key to repo
+      - name: Add public keys to repo
         env:
           USIGN_PUB_KEY: ${{ secrets.USIGN_PUB_KEY }}
-        if: env.USIGN_PUB_KEY != ''
+          APK_SIGNING_PUB: ${{ secrets.APK_SIGNING_PUB }}
         run: |
-          echo "$USIGN_PUB_KEY" > repo/engarde-repo.pub
+          # opkg signing key (24.10)
+          if [ -n "$USIGN_PUB_KEY" ]; then
+            echo "$USIGN_PUB_KEY" > repo/engarde-repo.pub
+          fi
+          # apk signing key (25.12)
+          if [ -n "$APK_SIGNING_PUB" ]; then
+            echo "$APK_SIGNING_PUB" > repo/engarde-apk.pem
+          fi
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
