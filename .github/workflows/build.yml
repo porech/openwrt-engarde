@@ -130,16 +130,23 @@ jobs:
           cd /tmp/sdk
           make defconfig
           cp -r ${{ github.workspace }}/frontend-assets /tmp/sdk/frontend-assets
-          # Build all engarde packages in a single make invocation
           make package/engarde/compile package/luci-app-engarde/compile V=s -j$(nproc)
 
-      - name: Collect packages
+      - name: Collect packages and generate index
         run: |
           PKG_EXT="${{ matrix.openwrt.pkg_format }}"
           mkdir -p packages
           find /tmp/sdk/bin/ -name "engarde-*.${PKG_EXT}" -exec cp {} packages/ \;
           find /tmp/sdk/bin/ -name "luci-app-engarde*.${PKG_EXT}" -exec cp {} packages/ \;
-          echo "Collected packages:"
+
+          # Generate index using SDK tools while they're available
+          if [ "$PKG_EXT" = "apk" ]; then
+            cd packages
+            /tmp/sdk/staging_dir/host/bin/apk mkndx -o packages.adb *.apk
+            cd ..
+          fi
+
+          echo "Collected:"
           ls -la packages/
 
       - name: Upload build artifacts
@@ -167,12 +174,12 @@ jobs:
             cp "$dir"/* "repo/${branch}/${arch}/" 2>/dev/null || true
           done
 
-      - name: Generate package indexes
+      - name: Generate opkg indexes (24.10)
         env:
           USIGN_SEC_KEY: ${{ secrets.USIGN_SEC_KEY }}
           USIGN_PUB_KEY: ${{ secrets.USIGN_PUB_KEY }}
         run: |
-          # Install usign for opkg signing
+          # Install usign
           sudo apt-get -qq install -y usign 2>/dev/null || {
             git clone https://git.openwrt.org/project/usign.git /tmp/usign-src
             cd /tmp/usign-src && cmake . && make && sudo cp usign /usr/local/bin/
@@ -181,19 +188,15 @@ jobs:
 
           if [ -n "$USIGN_SEC_KEY" ]; then
             echo "$USIGN_SEC_KEY" > /tmp/usign.sec
-            echo "$USIGN_PUB_KEY" > /tmp/usign.pub
           fi
 
+          # Generate Packages index only for ipk directories
           for arch_dir in repo/*/*/; do
-            branch=$(basename "$(dirname "$arch_dir")")
             cd "$arch_dir"
-
             if ls *.ipk 1>/dev/null 2>&1; then
-              # opkg format (24.10 and earlier)
               for ipk in *.ipk; do
                 tar -xOf "$ipk" ./control.tar.gz 2>/dev/null | tar xzf - --to-stdout ./control 2>/dev/null || \
-                  tar -xOf "$ipk" ./control.tar.zst 2>/dev/null | zstd -d | tar xf - --to-stdout ./control 2>/dev/null || \
-                  true
+                  tar -xOf "$ipk" ./control.tar.zst 2>/dev/null | zstd -d | tar xf - --to-stdout ./control 2>/dev/null || true
                 echo "Filename: $ipk"
                 echo "Size: $(stat -c %s "$ipk")"
                 echo "SHA256sum: $(sha256sum "$ipk" | cut -d' ' -f1)"
@@ -203,33 +206,8 @@ jobs:
               if [ -f /tmp/usign.sec ]; then
                 usign -S -m Packages -s /tmp/usign.sec
               fi
-              echo "Generated opkg index for ${branch}/$(basename "$arch_dir")"
-
-            elif ls *.apk 1>/dev/null 2>&1; then
-              # apk format (25.12+) — generate packages.adb using apk mkndx
-              # Download apk-tools static binary for index generation
-              if [ ! -f /tmp/apk ]; then
-                wget -qO /tmp/apk "https://gitlab.alpinelinux.org/alpine/apk-tools/-/package_files/131/download" 2>/dev/null || \
-                  wget -qO /tmp/apk "https://dl-cdn.alpinelinux.org/alpine/v3.21/main/x86_64/apk-tools-static-2.14.6-r3.apk" 2>/dev/null || true
-                # Use system apk if available, or build from OpenWRT source
-                if ! command -v apk >/dev/null 2>&1 && [ ! -x /tmp/apk ]; then
-                  # Fallback: use the SDK's own apk from the cached build
-                  echo "WARNING: apk-tools not available, skipping index generation"
-                  cd "$OLDPWD"
-                  continue
-                fi
-              fi
-              # Generate index using apk mkndx
-              APK_TOOL="apk"
-              command -v apk >/dev/null 2>&1 || APK_TOOL="/tmp/apk"
-              $APK_TOOL mkndx -o packages.adb *.apk 2>/dev/null || {
-                # Fallback: try with --allow-untrusted
-                $APK_TOOL mkndx --allow-untrusted -o packages.adb *.apk 2>/dev/null || \
-                  echo "WARNING: Could not generate apk index for ${branch}/$(basename "$arch_dir")"
-              }
-              echo "Generated apk index for ${branch}/$(basename "$arch_dir")"
             fi
-
+            # apk directories already have packages.adb from the build step
             cd "$OLDPWD"
           done
 
