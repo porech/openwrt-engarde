@@ -148,11 +148,9 @@ jobs:
 
           # Generate index using SDK tools while they're available
           if [ "$PKG_EXT" = "apk" ]; then
-            # Trust our signing key for index verification
-            sudo mkdir -p /etc/apk/keys
-            sudo cp /tmp/sdk/public-key.pem /etc/apk/keys/
             cd packages
             /tmp/sdk/staging_dir/host/bin/apk mkndx \
+              --allow-untrusted \
               --sign /tmp/sdk/private-key.pem \
               --output packages.adb *.apk
             cd ..
